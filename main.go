@@ -3,14 +3,13 @@ package main
 import (
 	"crypto/sha256"
 	"encoding/hex"
-	"errors"
 	"go-concurrency-example/bruteforce"
 	"log"
 	"math/rand"
 	"time"
 )
 
-const MaxPinSize = 10
+const MaxPinSize = 8
 const allowedPinCharacters string = "0123456789"
 
 func randomPinCode(size int) string {
@@ -31,18 +30,31 @@ func hexSha256(input string) string {
 	return hexHashedPin
 }
 
-func findCollision(hash string, maxPinSize int) (string, error) {
-	for i := 0; i < maxPinSize; i++ {
-		log.Printf("Iterating %d-sized pins", i)
-		combinations := bruteforce.CombinationsBruteForce(allowedPinCharacters, i)
-		for _, c := range combinations {
-			bfHash := hexSha256(c)
+func searchForCollision(hash string, pinSize int, collisionChan chan string) {
+	log.Printf("Iterating %d-sized pins", pinSize)
+	combinations := bruteforce.CombinationsBruteForce(allowedPinCharacters, pinSize)
+	processPart := func(ccs []string, cc chan string) {
+		for _, comb := range combinations {
+			bfHash := hexSha256(comb)
+			//log.Printf("computing hash for %s:%s", ccs, bfHash)
 			if bfHash == hash {
-				return bfHash, nil
+				cc <- comb
 			}
 		}
 	}
-	return "", errors.New("not found")
+	go processPart(combinations[0:len(combinations)/2], collisionChan)
+	go processPart(combinations[len(combinations)/2:], collisionChan)
+}
+
+func findCollision(hash string, maxPinSize int) string {
+	var collisionChan = make(chan string)
+	for i := 0; i <= maxPinSize; i++ {
+		go searchForCollision(hash, i, collisionChan)
+	}
+	select {
+	case c := <-collisionChan:
+		return c
+	}
 }
 
 func main() {
@@ -52,8 +64,8 @@ func main() {
 	log.Printf("Calculated hash: %s\n", hash)
 
 	start := time.Now()
-	collision, err := findCollision(hash, MaxPinSize)
-	if err != nil {
+	collision := findCollision(hash, MaxPinSize)
+	if collision == "" {
 		log.Printf("couldn't find a collision")
 	} else {
 		log.Printf("found collision! %s produces hash %s\n", collision, hash)
