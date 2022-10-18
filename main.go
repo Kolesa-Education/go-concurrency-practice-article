@@ -54,9 +54,9 @@ func main() {
 	start := time.Now()
 	collision, err := findCollision(hash, MaxPinSize)
 	if err != nil {
-		log.Printf("found collision! %s produces hash %s\n", collision, hash)
+		log.Printf("couldn't find a collision")
 	} else {
-		log.Printf("couldn't find a collistion")
+		log.Printf("found collision! %s produces hash %s\n", collision, hash)
 	}
 	end := time.Now().Sub(start)
 	log.Printf("Finished in %d ns / %d ms / %ds", end, end/time.Millisecond, end/time.Second)
