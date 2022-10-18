@@ -42,6 +42,7 @@ func searchForCollision(hash string, pinSize int, collisionChan chan string) {
 			}
 		}
 	}
+
 	go processPart(combinations[0:len(combinations)/2], collisionChan)
 	go processPart(combinations[len(combinations)/2:], collisionChan)
 }
