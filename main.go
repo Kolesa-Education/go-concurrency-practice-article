@@ -6,6 +6,7 @@ import (
 	"go-concurrency-example/bruteforce"
 	"log"
 	"math/rand"
+	"runtime"
 	"time"
 )
 
@@ -33,24 +34,24 @@ func hexSha256(input string) string {
 func searchForCollision(hash string, pinSize int, collisionChan chan string) {
 	log.Printf("Iterating %d-sized pins", pinSize)
 	combinations := bruteforce.CombinationsBruteForce(allowedPinCharacters, pinSize)
-	processPart := func(ccs []string, cc chan string) {
-		for _, comb := range combinations {
-			bfHash := hexSha256(comb)
-			//log.Printf("computing hash for %s:%s", ccs, bfHash)
-			if bfHash == hash {
-				cc <- comb
-			}
+	for _, comb := range combinations {
+		bfHash := hexSha256(comb)
+		//log.Printf("computing hash for %s:%s", ccs, bfHash)
+		if bfHash == hash {
+			collisionChan <- comb
 		}
 	}
-
-	go processPart(combinations[0:len(combinations)/2], collisionChan)
-	go processPart(combinations[len(combinations)/2:], collisionChan)
 }
 
-func findCollision(hash string, maxPinSize int) string {
-	var collisionChan = make(chan string)
+func findCollision(hash string, maxPinSize int, maxGoroutines int) string {
+	guard := make(chan any, maxGoroutines)
+	var collisionChan = make(chan string, maxGoroutines)
+
 	for i := 0; i <= maxPinSize; i++ {
+		guard <- struct{}{}
 		go searchForCollision(hash, i, collisionChan)
+		<-guard
+		searchForCollision(hash, i, collisionChan)
 	}
 	select {
 	case c := <-collisionChan:
@@ -58,19 +59,39 @@ func findCollision(hash string, maxPinSize int) string {
 	}
 }
 
+func measure(f func()) time.Duration {
+	start := time.Now()
+	f()
+	end := time.Now().Sub(start)
+	return end
+}
+
+func mean[T int64 | time.Duration | float64](data []T) float64 {
+	sum := 0.0
+	for i := 0; i < len(data); i++ {
+		sum += float64(data[i])
+	}
+	return sum / float64(len(data))
+}
+
+func combinations(pin string) {
+	hash := hexSha256(pin)
+	log.Printf("Calculated hash: %s\n", hash)
+	duration := measure(func() {
+		collision := findCollision(hash, MaxPinSize, runtime.NumCPU())
+		if collision == "" {
+			log.Printf("couldn't find a collision")
+		} else {
+			log.Printf("found collision! %s produces hash %s\n", collision, hash)
+		}
+	})
+	log.Printf("Finished in %d ns / %d ms / %ds", duration, duration/time.Millisecond, duration/time.Second)
+}
+
 func main() {
 	size := 8
 	pin := randomPinCode(size)
-	hash := hexSha256(pin)
-	log.Printf("Calculated hash: %s\n", hash)
+	log.Printf("runtime cores accessible %d\n", runtime.NumCPU())
+	combinations(pin)
 
-	start := time.Now()
-	collision := findCollision(hash, MaxPinSize)
-	if collision == "" {
-		log.Printf("couldn't find a collision")
-	} else {
-		log.Printf("found collision! %s produces hash %s\n", collision, hash)
-	}
-	end := time.Now().Sub(start)
-	log.Printf("Finished in %d ns / %d ms / %ds", end, end/time.Millisecond, end/time.Second)
 }

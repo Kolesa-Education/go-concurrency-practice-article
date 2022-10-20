@@ -530,3 +530,140 @@ func findCollision(hash string, maxPinSize int) string {
 2022/10/19 02:49:43 Finished in 39849001629 ns / 39849 ms / 39s
 
 ```
+
+### Оформим по человечески
+
+Разумно все наши замеры (бенчмарки) вынести системно, чтобы было легче это запустить и проверять.
+Вынесем нашу функцию по поиску комбинаций отдельно:
+
+```go
+func combinations(pin string) {
+	hash := hexSha256(pin)
+	log.Printf("Calculated hash: %s\n", hash)
+	duration := measure(func() {
+		collision := findCollision(hash, MaxPinSize)
+		if collision == "" {
+			log.Printf("couldn't find a collision")
+		} else {
+			log.Printf("found collision! %s produces hash %s\n", collision, hash)
+		}
+	})
+	log.Printf("Finished in %d ns / %d ms / %ds", duration, duration/time.Millisecond, duration/time.Second)
+}
+
+func main() {
+    size := 8
+    pin := randomPinCode(size)
+    combinations(pin)
+}
+```
+
+И напишем бенчмарки. В Go они идиоматично вписываются в концепцию тестов
+```go
+//main_test.go
+func Benchmark_combinations(b *testing.B) {
+	b.Run("99999999", func(b *testing.B) {
+		for i := 0; i < b.N; i++ {
+			combinations("99999999")
+		}
+	})
+
+	b.Run("9999999", func(b *testing.B) {
+		for i := 0; i < b.N; i++ {
+			combinations("9999999")
+		}
+	})
+
+	b.Run("999999", func(b *testing.B) {
+		for i := 0; i < b.N; i++ {
+			combinations("999999")
+		}
+	})
+
+	b.Run("99999", func(b *testing.B) {
+		for i := 0; i < b.N; i++ {
+			combinations("99999")
+		}
+	})
+
+	b.Run("11111111", func(b *testing.B) {
+		for i := 0; i < b.N; i++ {
+			combinations("11111111")
+		}
+	})
+
+	b.Run("1111111", func(b *testing.B) {
+		for i := 0; i < b.N; i++ {
+			combinations("1111111")
+		}
+	})
+
+	b.Run("111111", func(b *testing.B) {
+		for i := 0; i < b.N; i++ {
+			combinations("111111")
+		}
+	})
+
+	b.Run("11111", func(b *testing.B) {
+		for i := 0; i < b.N; i++ {
+			combinations("11111")
+		}
+	})
+
+	b.Run("55555555", func(b *testing.B) {
+		for i := 0; i < b.N; i++ {
+			combinations("55555555")
+		}
+	})
+
+	b.Run("5555555", func(b *testing.B) {
+		for i := 0; i < b.N; i++ {
+			combinations("5555555")
+		}
+	})
+
+	b.Run("555555", func(b *testing.B) {
+		for i := 0; i < b.N; i++ {
+			combinations("555555")
+		}
+	})
+
+	b.Run("55555", func(b *testing.B) {
+		for i := 0; i < b.N; i++ {
+			combinations("55555")
+		}
+	})
+}
+```
+
+### Больше горутин богу горутин! Или нет...?
+
+В общем случае, вы можете выиграть от горутин в сценариях:
+
+- У вас большая загрузка по CPU
+- У вас много блокировок --- например запись\чтение по сети или из файлов
+
+И в этих ситуациях у нас _разный подход к эффективному внедрению горутин_.
+
+#### Блокировки
+
+В случае блокировок, вы выигрываете от горутин в том смысле, что пока вы ждете I/O операцию (чтение/запись), ваш процессор
+в другом **потоке**[^threads] может заняться каким-то более полезным делом и эффективнее применить себя. В этом случае какого-то универсального
+подхода нет, плодите горутины, пока хватает памяти
+
+#### CPU
+
+Тут кейс другой --- у вас **итак большой загруз по CPU**, потому вы не сможете "более эффективно" использовать свое процессорное время.
+То есть, если у вас N количество ядер, то в теории, на них может исполнятся не более N потоков. **А значит, нет смысла создавать
+больше, чем N горутин, ведь они, в самом оптимистичном сценарии, лягут по одному на каждый поток**.
+
+Любое добавление горутины сверху, может привести (а может и не привести) к созданию дополнительных потоков, и, как следствие ---
+увеличению времени на `context switching`/`interruptions`
+
+> Поэтому в таких сценариях полезно ограничивать количество горутин количеством ваших процессоров
+
+#### Ограничиваем в коде количество горутин
+
+
+
+[^threads]: Напоминаю, что в Go прямого управления потоками --- нет, только горутины, а как они лягут на потоки --- одна ОС знает (и скедулер)
