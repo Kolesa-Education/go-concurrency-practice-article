@@ -3,7 +3,7 @@ package main
 import (
 	"crypto/sha256"
 	"encoding/hex"
-	"go-concurrency-example/bruteforce"
+	"github.com/Kolesa-Education/go-concurrency-practice-article/bruteforce"
 	"log"
 	"math/rand"
 	"runtime"
@@ -65,14 +65,6 @@ func measure(f func()) time.Duration {
 	f()
 	end := time.Now().Sub(start)
 	return end
-}
-
-func mean[T int64 | time.Duration | float64](data []T) float64 {
-	sum := 0.0
-	for i := 0; i < len(data); i++ {
-		sum += float64(data[i])
-	}
-	return sum / float64(len(data))
 }
 
 func combinations(pin string) {
