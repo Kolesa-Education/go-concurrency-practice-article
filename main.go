@@ -49,9 +49,10 @@ func findCollision(hash string, maxPinSize int, maxGoroutines int) string {
 
 	for i := 0; i <= maxPinSize; i++ {
 		guard <- struct{}{}
-		go searchForCollision(hash, i, collisionChan)
-		<-guard
-		searchForCollision(hash, i, collisionChan)
+		go func(i int) {
+			searchForCollision(hash, i, collisionChan)
+			<-guard
+		}(i)
 	}
 	select {
 	case c := <-collisionChan:

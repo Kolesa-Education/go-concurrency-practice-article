@@ -653,8 +653,8 @@ func Benchmark_combinations(b *testing.B) {
 
 #### CPU
 
-Тут кейс другой --- у вас **итак большой загруз по CPU**, потому вы не сможете "более эффективно" использовать свое процессорное время.
-То есть, если у вас N количество ядер, то в теории, на них может исполнятся не более N потоков. **А значит, нет смысла создавать
+Тут кейс другой --- у вас, **итак, большой загруз по CPU**, потому вы не сможете "более эффективно" использовать свое процессорное время.
+То есть, если у вас N количество ядер, то в теории, на них может исполниться не более N потоков. **А значит, нет смысла создавать
 больше, чем N горутин, ведь они, в самом оптимистичном сценарии, лягут по одному на каждый поток**.
 
 Любое добавление горутины сверху, может привести (а может и не привести) к созданию дополнительных потоков, и, как следствие ---
@@ -664,6 +664,174 @@ func Benchmark_combinations(b *testing.B) {
 
 #### Ограничиваем в коде количество горутин
 
+Для того чтобы реализовать механизм ограничения горутин, мы можем воспользоваться... Каналами, конечно же!
+Каналы имеют интересное свойство блокировать исполнение, пока не заполнится указанное количество "сообщений" в этом канале
 
+По сути, мы построили себе семафор[^semaphore]. Семафор --- это такой mutex[^mutex], где есть несколько потоков (в нашем случае --- горутин)
 
+```go
+func main() {
+	maxGoroutines := 10
+	lock := make(chan struct{}, maxGoroutines) //Создаем канал, который примет maxGoroutines элементов, прежде чем заблокируется
+	
+	for i := 0; i < 100; i++ {
+		// Записываем в канал пустую структуру. 
+		// Если там элементов больше чем maxGoroutines, то эта строчка будет "ждать", пока освободиться место
+        lock <- struct{}{}
+		go func(n int) {
+		    fmt.Printf("doing %d iteration\n", n)
+			// Читаем элемент из канала, удаляя его из канала
+			// Тем самым "освобождая место" в канале
+			<-lock
+        }(i)
+    }
+}
+```
+
+> Каналы в Go, кстати говоря, это, упрощенно говоря, просто [массив с mutex](https://go.dev/src/runtime/chan.go)
+
+[^semaphore]: <https://www.baeldung.com/cs/semaphore>
+[^mutex]: <https://stackoverflow.com/questions/34524/what-is-a-mutex>
 [^threads]: Напоминаю, что в Go прямого управления потоками --- нет, только горутины, а как они лягут на потоки --- одна ОС знает (и скедулер)
+
+
+Перепишем теперь наш участок кода:
+
+```go
+
+package main
+import (
+  "crypto/sha256"
+  "encoding/hex"
+  "go-concurrency-example/bruteforce"
+  "log"
+  "math/rand"
+  "runtime"
+  "time"
+)
+
+const MaxPinSize = 8
+const allowedPinCharacters string = "0123456789"
+
+func randomPinCode(size int) string {
+  return randomPinCodeWithRand(size, *rand.New(rand.NewSource(time.Now().UnixNano())))
+}
+
+func randomPinCodeWithRand(size int, r rand.Rand) string {
+  b := make([]byte, size)
+  for i := range b {
+    b[i] = allowedPinCharacters[r.Intn(len(allowedPinCharacters))]
+  }
+  return string(b)
+}
+
+func hexSha256(input string) string {
+  hashedPin := sha256.Sum256([]byte(input))
+  hexHashedPin := hex.EncodeToString(hashedPin[:])
+  return hexHashedPin
+}
+
+func searchForCollision(hash string, pinSize int, collisionChan chan string) {
+  log.Printf("Iterating %d-sized pins", pinSize)
+  combinations := bruteforce.CombinationsBruteForce(allowedPinCharacters, pinSize)
+  for _, comb := range combinations {
+    bfHash := hexSha256(comb)
+    //log.Printf("computing hash for %s:%s", ccs, bfHash)
+    if bfHash == hash {
+      collisionChan <- comb
+    }
+  }
+}
+
+func findCollision(hash string, maxPinSize int, maxGoroutines int) string {
+  guard := make(chan any, maxGoroutines)
+  var collisionChan = make(chan string, maxGoroutines)
+
+  for i := 0; i <= maxPinSize; i++ {
+    guard <- struct{}{}
+    go func(i int) {
+      searchForCollision(hash, i, collisionChan)
+      <-guard
+    }(i)
+  }
+  select {
+  case c := <-collisionChan:
+    return c
+  }
+}
+
+func measure(f func()) time.Duration {
+  start := time.Now()
+  f()
+  end := time.Now().Sub(start)
+  return end
+}
+
+func mean[T int64 | time.Duration | float64](data []T) float64 {
+  sum := 0.0
+  for i := 0; i < len(data); i++ {
+    sum += float64(data[i])
+  }
+  return sum / float64(len(data))
+}
+
+func combinations(pin string) {
+  hash := hexSha256(pin)
+  log.Printf("Calculated hash: %s\n", hash)
+  duration := measure(func() {
+    collision := findCollision(hash, MaxPinSize, runtime.NumCPU())
+    if collision == "" {
+      log.Printf("couldn't find a collision")
+    } else {
+      log.Printf("found collision! %s produces hash %s\n", collision, hash)
+    }
+  })
+  log.Printf("Finished in %d ns / %d ms / %ds", duration, duration/time.Millisecond, duration/time.Second)
+}
+
+func main() {
+  size := 8
+  pin := randomPinCode(size)
+  log.Printf("runtime cores accessible %d\n", runtime.NumCPU())
+  combinations(pin)
+}
+```
+
+Прошу отдельно обратить внимание на вот этот участок кода:
+
+```go
+func findCollision(hash string, maxPinSize int, maxGoroutines int) string {
+	guard := make(chan any, maxGoroutines)
+	var collisionChan = make(chan string, maxGoroutines)
+
+	for i := 0; i <= maxPinSize; i++ {
+		guard <- struct{}{}
+		// Здесь я объявляю анонимную функцию и сразу же ее вызываю (внимание на скобки `(i)`)
+		// Еще я обязательно передаю i, вместо того, чтобы юзать ту, что в цикле. Если бы я так сделал, то получил бы
+		// кучу непредвиденных ошибок.
+		// Подробнее об этом: https://stackoverflow.com/questions/67263092/how-can-i-use-goroutine-to-execute-for-loop
+		go func(i int) {
+			searchForCollision(hash, i, collisionChan)
+			<-guard
+		}(i)
+	}
+	select {
+	case c := <-collisionChan:
+		return c
+	}
+}
+```
+
+## Выводы
+
+Таким образом, мы разобрали различные подводные камни в нашей задаче и чуть-чуть более познакомились на практике с горутинами.
+Наверное, самая главная идея, которую я хотел здесь передать: все ошибки, на которые я натыкался, весьма _неочевидны_.
+Мне приходилось исходить из фундаментального понимания того, как работает мультипоточность на уровне ОС, чтобы решить часть моих
+проблем и найти разумный компромисс.
+
+Компилятор мне ничего не подсказал, для решения этих проблем, просто потому что такие кейсы практически нереально 
+учесть в рамках статического анализа кода. Код на Go выступал здесь просто как выражение моей идеи, но основные задумки
+исходили именно из понимания процессов мультипоточности под низом.
+
+Наверное, это одна из самых больших проблем работы с мультипоточностью на практике --- надо много вещей держать в голове
+и не всегда есть что-то, что ударит вас по рукам, чтобы остановить, когда делаете что-то не так.
