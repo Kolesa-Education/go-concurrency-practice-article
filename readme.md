@@ -83,7 +83,7 @@ import (
 	"time"
 )
 
-const MaxPinSize = 10
+const MaxPinSize = 8
 const allowedPinCharacters string = "0123456789"
 
 func randomPinCode(size int) string {
